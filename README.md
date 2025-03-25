@@ -21,6 +21,8 @@ Technical data:
 
 1x EXTERNAL reset pin
 
+1x DEBUG output pin
+
 1x SMALL interface connector
 
 1x BUZZER
