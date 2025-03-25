@@ -7,7 +7,7 @@ Technical data:
 
 2x SPI interface for SD card
 
-1x SERIAL PORT @38400 baud interrupt driven witch handshake CTS/RTS
+1x SERIAL PORT @38400 baud interrupt driven with handshake CTS/RTS
 
 1x SOFTWARE only tx serial port
 
