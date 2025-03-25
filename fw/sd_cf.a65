@@ -1,0 +1,671 @@
+; SD card interface module
+;
+; Requires:
+;   sd_po   1 zero-page pointer
+;   sd_lba  uint32 sector number
+;   sd_cn   aux
+;
+;                    .DEFINE SD_DEBUG
+;
+                    .IFDEF SD_DEBUG
+; printcd c debug print
+                    .macro printcd c
+                    lda #c
+                    jsr putc
+                    .endmacro
+                    .ELSE
+                    .macro printcd c
+                    .endmacro
+                    .ENDIF
+;
+                    .macro SD_CS2HIGH
+                    lda sd_port
+                    ora #SD_CS
+                    sta sd_port
+                    .endmacro
+;
+                    .macro SD_MOSI2HIGH
+                    lda sd_port
+                    ora #SD_MOSI
+                    sta sd_port
+                    .endmacro
+;
+                    .macro SD_MOSI2LOW
+                    lda sd_port
+                    and #~SD_MOSI
+                    sta sd_port
+                    .endmacro
+;                
+                    .macro SD_CS2LOW
+                    lda sd_port
+                    and #<~SD_CS
+                    sta sd_port
+                    .endmacro
+;
+                    .macro SD_CLK2LOW
+                    lda sd_port
+                    and #<~SD_SCK
+                    sta sd_port
+                    .endmacro
+;
+                    .macro SD_CLK2HIGH
+                    lda sd_port
+                    ora #SD_SCK
+                    sta sd_port
+                    .endmacro               
+;
+                    .macro SD_8CLK
+                    lda #255
+                    jsr sd_write_byte
+                    .endmacro
+;
+SD_TRY			= 100
+SD_TRY1			= 1700          ;~250ms
+SD_MAX_RET		= 3
+;
+sd_po			= ra
+sd_cnt			= rb
+;
+sd_ddr              = ddra0
+sd_port             = porta0
+sd_miso_ddr         = ddrb0
+sd_miso_port        = portb0
+SD_CS               = %00001000
+SD_SCK              = %00010000
+SD_MOSI             = %00100000
+SD_MISO             = %10000000
+SD_MASK             = (SD_SCK | SD_CS | SD_MOSI)
+;
+                    .segment "CODE"
+;------------------------------------------
+; uint8 sd_init(void);
+; void __fastcall__ sd_set_sector_l(uint16 adl);
+; void __fastcall__ sd_set_sector_h(uint16 adh);
+; uint8 __fastcall__ sd_read_sector(uint8 *p);
+; uint8 __fastcall__ sd_write_sector(uint8 *p);
+msdi:
+cmd_sdi:
+sd_init:
+; ck=0 mosi=1 cs=1
+	;lda #$ff
+	lda #0
+	sta sd_lba
+	sta sd_lba+1
+	sta sd_lba+2
+	sta sd_lba+3
+;
+	lda sd_miso_ddr   ; miso as input
+	and #~SD_MISO & 255
+                    sta sd_miso_ddr
+;
+                    lda sd_port
+                    and #<~SD_MASK
+                    ora #SD_CS | SD_MOSI
+                    sta sd_port
+                    lda sd_ddr
+                    and #<~SD_MASK
+                    ora #SD_CS | SD_MOSI | SD_SCK
+                    sta sd_ddr
+;
+                    ldy#10          ; send 80 clk pulses
+@0:                 phy
+                    lda #255
+                    jsr sd_write_byte
+                    ply
+                    dey
+                    bne @0 
+; CMD0 - GO_IDLE_STATE - resets card to idle state, and SPI mode
+                    lda #<sd_cmd0_bytes
+                    ldx #>sd_cmd0_bytes
+                    sta sd_po
+                    stx sd_po+1
+                    jsr sd_send_command
+; Expect status response $01 (not initialized)
+                    cmp #$01
+                    bne sd_init_x ;@initfailed
+; CMD8 - SEND_IF_COND - tell the card how we want it to operate (3.3V, etc)  
+                    lda #<sd_cmd8_bytes
+                    ldx #>sd_cmd8_bytes
+                    sta sd_po
+                    stx sd_po+1
+                    jsr sd_send_command
+; Expect status response $01 (not initialized)
+                    cmp #$01
+                    bne sd_init_x ;@initfailed
+  ; Read 32-bit return value, but ignore it
+                    jsr sd_read_byte
+                    jsr sd_read_byte
+                    jsr sd_read_byte
+                    jsr sd_read_byte
+;
+; APP_CMD - required prefix for ACMD commands
+;
+                    lda #SD_TRY
+                    sta sd_nret
+;
+sd_init_cmd55:      lda #<sd_cmd55_bytes
+                    ldx #>sd_cmd55_bytes
+                    sta sd_po
+                    stx sd_po+1
+                    jsr sd_send_command
+; Expect status response $01 (not initialized)
+                    cmp #$01
+                    bne sd_init_x  ;@initfailed
+; cmd 41  APP_SEND_OP_COND - send operating conditions, initialize card
+                    lda #<sd_cmd41_bytes
+                    ldx #>sd_cmd41_bytes
+                    sta sd_po
+                    stx sd_po+1
+                    jsr sd_send_command
+; Status response $00 means initialised
+                    cmp #$00
+                    beq sd_init_q ; initialized
+; Otherwise expect status response $01 (not initialized)
+                    cmp #$01
+                    bne sd_init_x ; initfailed
+;
+; Not initialized yet, so wait a while then try again.
+; This retry is important, to give the card time to initialize.
+;
+                    dec sd_nret
+                    beq sd_init_x
+                    ldy #100 ;50 ;20             ;delay 10ms
+                    jsr delayhalfms
+                    jmp sd_init_cmd55
+;
+sd_init_q:          lda #0
+                    beq sd_init_x0
+;
+sd_init_x:          SD_CS2HIGH
+                    lda #$80
+sd_init_x0:         rts
+;
+; commands table with parametrs and crc
+;
+sd_cmd0_bytes:      .byte $40, $00, $00, $00, $00, $95
+sd_cmd8_bytes:      .byte $48, $00, $00, $01, $aa, $87
+sd_cmd55_bytes:     .byte $77, $00, $00, $00, $00, $01
+sd_cmd41_bytes:     .byte $69, $40, $00, $00, $00, $01
+;
+; sd_read_byte
+; reads 1 byte from sdcard
+sd_read_byte:       ldx #$fe    ; Preloaded with seven ones and a zero, so we stop after eight bits
+                    SD_MOSI2HIGH
+;
+@0:                 SD_CLK2HIGH
+                    bit sd_miso_port
+                    clc                         ; default to clearing the bottom bit
+                    bpl @1
+                    sec 
+;                            ; in which case get ready to set the bottom bit
+@1:                 SD_CLK2LOW
+                    txa                         ; transfer partial result from X
+                    rol                         ; rotate carry bit into read result, and loop bit into carry
+                    tax                         ; save partial result back to X
+                    bcs @0 ;@loop                   ; loop if we need to read more bits
+                    rts
+; sd_write byte
+; write byte in a to spi
+sd_write_byte:      ldx #8          ; send 8 bits
+;                       
+@0:                 asl             ; shift next bit into carry
+                    tay             ; save remaining bits for later
+                    lda sd_port
+                    and #<~SD_MOSI
+                    bcc @1          ; if carry clear, don't set MOSI for this bit
+                    ora #SD_MOSI
+
+@1:                 sta sd_port     ; data in mosi
+                    SD_CLK2HIGH     ; ck=1
+                    ;;nop
+                    SD_CLK2LOW      ; ck=0
+                    tya             ; restore remaining bits to send
+                    dex
+                    bne @0          ; loop if there are more bits to send
+                    rts
+;
+; wait for response read max SD_TRY1 times
+sd_wait_result:     mov_n2x SD_TRY1, sd_cnt
+@1:                 jsr sd_read_byte
+                    cmp #$ff
+                    bne @2
+                    dec_x sd_cnt
+                    bne @1
+                    lda #$ff
+@2:                 rts
+;
+; send command
+;
+sd_send_command:    SD_8CLK
+                    SD_CS2LOW           ; pull CS low to begin command
+                    SD_8CLK
+                    ldy #0
+                    lda (sd_po),y    ; command byte
+                    jsr sd_write_byte
+                    ldy #1
+                    lda (sd_po),y    ; data 1
+                    jsr sd_write_byte
+                    ldy #2
+                    lda (sd_po),y    ; data 2
+                    jsr sd_write_byte
+                    ldy #3
+                    lda (sd_po),y    ; data 3
+                    jsr sd_write_byte
+                    ldy #4
+                    lda (sd_po),y    ; data 4
+                    jsr sd_write_byte
+                    ldy #5
+                    lda (sd_po),y    ; crc
+                    jsr sd_write_byte
+;
+                    jsr sd_wait_result
+                    pha
+                    SD_8CLK
+                    SD_CS2HIGH
+                    SD_8CLK
+                    pla
+                    rts
+;
+; sd_set_sector_l
+; saves ax in sd_lba low word
+;
+msdll:
+sd_set_sector_l:    sta sd_lba
+                    stx sd_lba+1
+                    rts
+;
+; sd_set_sector_h
+; saves ax in sd_lba high word
+;
+msdlh:
+sd_set_sector_h:    sta sd_lba+2
+                    stx sd_lba+3
+                    rts
+;
+; sd_read_sector
+; reads sector retrying SD_MAX_RET times
+;
+msdr:
+sd_read_sector:     sta sd_po
+                    stx sd_po+1
+                    ldy #SD_MAX_RET
+@2:                 jsr sd_read_sectork
+                    cmp #0
+                    beq @1
+                    dey
+                    bne @2
+@1:                 rts
+;
+; sd_read_sectork
+; reads sector once
+;
+sd_read_sectork:    phy                 ; save y
+                    SD_8CLK
+                    SD_CS2LOW           ; pull CS low to begin command
+                    SD_8CLK
+;  
+; CMD17, arg is sector number, crc not checked
+;
+                    lda #$51                    
+                    jsr sd_write_byte
+                    lda sd_lba+3        ; lba address   
+                    jsr sd_write_byte
+                    lda sd_lba+2
+                    jsr sd_write_byte
+                    lda sd_lba+1
+                    jsr sd_write_byte
+                    lda sd_lba
+                    jsr sd_write_byte
+                    lda #$01             ; crc (not checked)
+                    jsr sd_write_byte
+;
+                    jsr sd_wait_result
+                    cmp #$00
+                    bne @x
+; wait for data
+                    jsr sd_wait_result
+                    cmp #$fe
+                    bne @x
+; read 512 bytes - two pages of 256 bytes each
+                    jsr sd_read_page
+                    inc sd_po+1
+                    jsr sd_read_page
+                    dec sd_po+1
+                    jsr sd_read_byte ;crc
+                    jsr sd_read_byte
+;
+                    SD_8CLK
+                    SD_CS2HIGH
+                    SD_8CLK
+;
+                    lda #0
+                    beq @x0
+@x:                 SD_CS2HIGH
+                    lda #$81
+@x0:                ply
+                    rts
+;
+; Read 256 bytes to the address at sd_po
+;  
+sd_read_page:       ldy #0
+@1:                 jsr sd_read_byte
+                    sta (sd_po),y
+                    iny
+                    bne @1
+                    rts
+;
+; sd_write_sector
+; reads sector retrying SD_MAX_RET
+;
+msdw:
+sd_write_sector:    sta sd_po
+                    stx sd_po+1
+                    ldy #SD_MAX_RET
+@2:                 jsr sd_write_sectork
+                    cmp #0
+                    beq @1
+                    dey
+                    bne @2
+@1:                 rts
+;
+; sd_write_sectork
+; write sector once
+;
+sd_write_sectork:   phy
+                    printcd 'w'         ; debug printing
+                    SD_8CLK
+                    SD_CS2LOW           ; pull CS low to begin command
+                    SD_8CLK  
+; Command 24, arg is sector number, crc not checked
+                    lda #$58                    ; CMD24 - WRITE_SINGLE_BLOCK
+                    jsr sd_write_byte
+                    lda sd_lba+3        ; lba address   
+                    jsr sd_write_byte
+                    lda sd_lba+2
+                    jsr sd_write_byte
+                    lda sd_lba+1
+                    jsr sd_write_byte
+                    lda sd_lba
+                    jsr sd_write_byte
+                    lda #$01             ; crc (not checked)
+                    jsr sd_write_byte
+                    printcd '0'
+                    jsr sd_wait_result
+                    cmp #$00
+                    bne sd_write_sector_x
+                    printcd '1'
+                    lda #$fe
+                    jsr sd_write_byte
+                    printcd '2'
+; Need to write 512 bytes - two pages of 256 bytes each
+                    jsr sd_write_page
+                    inc sd_po+1
+                    jsr sd_write_page
+                    dec sd_po+1
+;
+                    jsr sd_wait_result ;sd_read_byte        ; test if data accepted
+                    and #%00011111
+                    cmp #5
+                    bne sd_write_sector_x
+;                    
+                    mov_n2x SD_TRY1, sd_cnt ; id data accepted wait unill sd free                    
+sd_write_sector_0:  jsr sd_read_byte
+                    cmp #0
+                    bne sd_write_sector_q
+                    dec_x sd_cnt
+                    bne sd_write_sector_0
+                    bra sd_write_sector_x  ; timeout
+;
+sd_write_sector_q:  printcd 'e'
+                    SD_8CLK
+                    SD_CS2HIGH
+                    SD_8CLK
+;
+                    lda #0
+                    beq sd_write_sector_x0
+;                    
+sd_write_sector_x:  SD_CS2HIGH
+                    lda #$82
+;
+sd_write_sector_x0: ply
+                    rts
+;
+sd_write_page:      ldy #0
+@0:                 lda (sd_po),y
+                    phy
+                    jsr sd_write_byte
+                    ply
+                    iny
+                    bne @0
+                    rts
+;
+;----------------------------------------------------------
+;----------------------------------------------------------
+;  CF - compact flash
+;----------------------------------------------------------
+;----------------------------------------------------------
+;
+CF_DATA		= ide0+0		; Data (R/W)
+CF_ERR		= ide0+1		; Error register (R)
+CF_FEAT		= ide0+1		; Features (W)
+CF_SECCO	= ide0+2		; Sector count (R/W)
+CF_LBA0		= ide0+3		; LBA bits 0-7 (R/W, LBA mode)
+CF_LBA1		= ide0+4		; LBA bits 8-15 (R/W, LBA mode)
+CF_LBA2		= ide0+5		; LBA bits 16-23 (R/W, LBA mode)
+CF_LBA3		= ide0+6		; LBA bits 24-27 (R/W, LBA mode)
+CF_STAT		= ide0+7		; Status (R)
+CF_CMD		= ide0+7		; Command (W)
+;
+CF_NRTRY	= 64000
+;
+;----------------------------------------------------------
+; cf_rdy - ready to execute cmd
+; uses: rd, a, x
+; in:   -
+; out:  Z=1 ok
+;       Z=0 er
+;----------------------------------------------------------
+;
+cf_rdy:
+	mov_n2x CF_NRTRY, rd
+@l:
+	lda CF_STAT
+	and #%11000000
+	cmp #%01000000
+	beq @te
+	dec_x rd
+	bne @l
+	lda #2
+	bra @q
+@te:
+	lda CF_STAT
+	and #1
+@q:
+	rts
+;
+;----------------------------------------------------------
+; cf_drq - data request
+; uses: a, x, rega
+; in:   -
+; out:  Z=1 ok
+;       Z=0 er
+;----------------------------------------------------------
+;
+cf_drq:
+	mov_n2x CF_NRTRY, rd
+@l:
+	lda CF_STAT
+	and #%10001000
+	cmp #%00001000
+	beq @te
+	dec_x rd
+	bne @l
+	lda #3
+	bra @q
+@te:
+	lda CF_STAT
+	and #1
+@q:
+	rts
+;
+;----------------------------------------------------------
+; cf_init - init cf card
+; in:  none
+; out: d0=0 if ok
+;      d0=$90 if er
+;----------------------------------------------------------
+; init SD, CF
+mcfi:
+cmd_cfi:
+cf_init:
+	lda #0
+	sta cf_lba
+	sta cf_lba+1
+	sta cf_lba+2
+	sta cf_lba+3
+;
+	jsr cf_rdy
+	bne @e
+	lda #1
+	sta CF_FEAT		; 8 bit transfer
+	lda #$ef
+	sta CF_CMD		; set feature
+	jsr cf_rdy
+	bne @e
+	lda #$82
+	sta CF_FEAT		; no write caching
+	lda #$ef
+	sta CF_CMD		; set feature
+	lda #0
+	bra @q
+@e:
+	lda #$c0
+@q:
+	rts
+;
+;----------------------------------------------------------
+; cf_rds
+;
+; ax=dma
+; cf_lba=lba
+;----------------------------------------------------------
+;
+mcfr:
+cf_rds:
+	jsr cf_rwc
+	lda #$20	;#$ec	;to read drive info
+	sta CF_CMD		; read sec
+	jsr cf_drq
+	bne @e1
+;
+	ldy #0
+@l:
+	lda CF_DATA
+	sta (po),y
+	iny
+	bne @l
+;
+	inc po+1
+@ll:
+	lda CF_DATA
+	sta (po),y
+	iny
+	bne @ll
+;
+	jsr cf_rdy
+	bne @e3
+	lda #0
+	bra @q
+@e1:
+	lda #$c1
+	bra @q
+@e3:
+	lda #$c3
+@q:
+	rts
+;
+;----------------------------------------------------------
+; cf_wrs - cf write sector 512
+;
+; a0=dma
+; d0=lba
+;----------------------------------------------------------
+;
+mcfw:
+cf_wrs:
+	jsr cf_rwc
+	lda #$30
+	sta CF_CMD		; wr sec
+	jsr cf_drq
+	bne @e2
+;
+	ldy #0
+@l:
+	lda (po),y
+	sta CF_DATA
+	iny
+	bne @l
+;
+	inc po+1
+@ll:
+	lda (po),y
+	sta CF_DATA
+	iny
+	bne @ll
+;
+	jsr cf_rdy
+	bne @e4
+	lda #0
+	bra @q
+@e2:
+	lda #$c2
+	bra @q
+@e4:
+	lda #$c4
+@q:
+	rts
+;
+;----------------------------------------------------------
+; cf_rwc - common to rd & wr
+;----------------------------------------------------------
+;
+cf_rwc:
+	mov_ax2x po
+	lda #1
+	sta CF_SECCO		; 1 sec rd or wr
+	lda cf_lba
+	sta CF_LBA0
+	lda cf_lba+1
+	sta CF_LBA1
+	lda cf_lba+2
+	sta CF_LBA2
+	lda cf_lba+3
+	and #%11101111		; drive 0
+	ora #%01000000		; lba
+	sta CF_LBA3
+	rts
+;
+;----------------------------------------------------------
+; cf_set_sector_l
+; saves ax in cf_lba low word
+;----------------------------------------------------------
+;
+mcfll:
+cf_set_sector_l:
+	sta cf_lba
+	stx cf_lba+1
+	rts
+;
+;----------------------------------------------------------
+; cf_set_sector_h
+; saves ax in cf_lba high word
+;----------------------------------------------------------
+;
+mcflh:
+cf_set_sector_h:
+	sta cf_lba+2
+	stx cf_lba+3
+	rts
+;
+
+

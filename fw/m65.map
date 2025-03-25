@@ -1,0 +1,32 @@
+Modules list:
+-------------
+m65.o:
+    CODE              Offs=000000  Size=0019B6  Align=00001  Fill=0000
+    ZEROPAGE          Offs=000000  Size=000030  Align=00001  Fill=0000
+    BUFFERS           Offs=000000  Size=00018E  Align=00001  Fill=0000
+    VECTORS           Offs=000000  Size=000006  Align=00001  Fill=0000
+
+
+Segment list:
+-------------
+Name                   Start     End    Size  Align
+----------------------------------------------------
+ZEROPAGE              0000D0  0000FF  000030  00001
+BUFFERS               00DE00  00DF8D  00018E  00001
+CODE                  00E400  00FDB5  0019B6  00001
+VECTORS               00FFFA  00FFFF  000006  00001
+
+
+Exports list by name:
+---------------------
+
+
+
+Exports list by value:
+----------------------
+
+
+
+Imports list:
+-------------
+
