@@ -1,0 +1,65 @@
+Name     fs65sbc ;
+PartNo   01 ;
+Date     15/11/2023 ;
+Revision 17 ;
+Designer Fabio Sturman ;
+Company  Elekras ;
+Assembly fs65sbc ;
+Location U5 ;
+Device   g22v10 ;
+
+/* ram:0000/56KiB - viacaia:E000/512 */
+/* ide:E200/512   - rom:E400/7KiB    */
+/* ram  banking @ $a000              */
+
+/**************** INPUT PINS *********************/
+PIN  1 = A15;
+PIN  2 = F2;
+PIN  3 = RW;
+PIN  4 = PA0;
+PIN  5 = PA1;
+PIN  6 = PA2;
+PIN  7 = A10;
+PIN  8 = A11;
+PIN  9 = A12;
+PIN 10 = A13;
+PIN 11 = A14;
+PIN 13 = A9;
+
+/**************** OUTPUT PINS *********************/
+PIN 14 = AR16;
+PIN 15 = AR15;
+PIN 16 = AR14;
+PIN 17 = AR13;
+PIN 18 = RD;
+PIN 19 = WR;
+PIN 20 = VIACIA;
+PIN 21 = IDE;
+PIN 22 = ROM;
+PIN 23 = RAM;
+
+AUX = A15&A14&A13;
+
+/* RAM 0000 .. DFFF */
+!RAM = !A15 # A15&!A14 # A15&A14&!A13;
+
+/* ROM E400 .. FFFF */
+!ROM = AUX&A12 # AUX&!A12&A11 # AUX&!A12&!A11&A10;
+
+/* VIA-ACIA E000 512 */
+!VIACIA = AUX&!A12&!A11&!A10&!A9;
+
+/* IDE     E200 512 */
+!IDE =    AUX&!A12&!A11&!A10&A9;
+
+/* READ-WRITE */
+RD = !F2 # !RW;
+WR = !F2 #  RW;
+
+/* Paged memory managment - s=page addr=A000 page len=8k */
+S = A15&!A14&A13;
+AR16 = S;
+AR15 = !S&A15 # S&PA2;
+AR14 = !S&A14 # S&PA1;
+AR13 = !S&A13 # S&PA0;
+

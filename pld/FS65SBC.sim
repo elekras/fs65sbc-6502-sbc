@@ -1,0 +1,107 @@
+%SIGNAL
+PIN  13 =  A9 
+PIN   7 =  A10 
+PIN   8 =  A11 
+PIN   9 =  A12 
+PIN  10 =  A13 
+PIN  11 =  A14 
+PIN   1 =  A15 
+PIN  17 =  AR13 
+PIN  16 =  AR14 
+PIN  15 =  AR15 
+PIN  14 =  AR16 
+PIN   2 =  F2 
+PIN  21 =  IDE 
+PIN   4 =  PA0 
+PIN   5 =  PA1 
+PIN   6 =  PA2 
+PIN  23 =  RAM 
+PIN  18 =  RD 
+PIN  22 =  ROM 
+PIN   3 =  RW 
+PIN  20 =  VIACIA 
+PIN  19 =  WR 
+%END
+
+%FIELD
+%END
+
+%EQUATION
+AR13 =>
+    A13 & !A15
+  # A13 & A14
+  # A13 & !A14 & A15 & PA0
+
+AR14 =>
+    A14
+  # A13 & !A14 & A15 & PA1
+
+AR15 =>
+    A14 & A15
+  # !A13 & A15
+  # A13 & !A14 & A15 & PA2
+
+AR16 =>
+    A13 & !A14 & A15
+
+AUX =>
+    A13 & A14 & A15
+
+!IDE =>
+    A9 & !A10 & !A11 & !A12 & A13 & A14 & A15
+
+!RAM =>
+    !A15
+  # !A14 & A15
+  # !A13 & A14 & A15
+
+RD =>
+    !F2
+  # !RW
+
+!ROM =>
+    A12 & A13 & A14 & A15
+  # A11 & !A12 & A13 & A14 & A15
+  # A10 & !A11 & !A12 & A13 & A14 & A15
+
+S =>
+    A13 & !A14 & A15
+
+!VIACIA =>
+    !A9 & !A10 & !A11 & !A12 & A13 & A14 & A15
+
+WR =>
+    !F2
+  # RW
+
+AR13.oe  =>
+    1 
+
+AR14.oe  =>
+    1 
+
+AR15.oe  =>
+    1 
+
+AR16.oe  =>
+    1 
+
+IDE.oe  =>
+    1 
+
+RAM.oe  =>
+    1 
+
+RD.oe  =>
+    1 
+
+ROM.oe  =>
+    1 
+
+VIACIA.oe  =>
+    1 
+
+WR.oe  =>
+    1 
+
+%END
