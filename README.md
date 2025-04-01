@@ -1,7 +1,7 @@
 # fs65sbc
-Simple single board computer with 6502/65C02
+Simple single and small board (99.9 mm x 99.9 mm) computer with 6502/65C02
 
-Technical data:  
+# Technical data:  
 1x MICROPROCESSOR 65C02 @2MHz  
 1x IDE 8 bit interface for CF card (read speed 86 kB/s)  
 2x SPI interface for SD card  (read speed 5.6 kB/s)  
@@ -24,7 +24,7 @@ Technical data:
 8 KiB (e)eprom  
 7 KiB monitor m65  
 
-Connect the FS65SBC to a PC using FT232RL modified USB-SERIAL adapters  
+Connect the FS65SBC to PC using FT232RL modified USB-SERIAL adapters  
 <img src="./img/ftdi232-t.jpg" alt="Adapter top" width=500/>  
 <img src="./img/ftdi232-b.jpg" alt="Adapter bottom" width=500/>  
 <img src="./img/fs65sbc-1.png" alt="FS65SBC BOARD" width=800/>  
