@@ -33,6 +33,8 @@ Simple single and small board (99.9 mm x 99.9 mm) computer with 6502/65C02
 Connect the FS65SBC to PC using FT232RL modified USB-SERIAL adapters  
 <img src="./img/ftdi232-t.jpg" alt="Adapter top" width=500/>  
 <img src="./img/ftdi232-b.jpg" alt="Adapter bottom" width=500/>  
+<img src="./img/fs65sbc-top.jpg" alt="PCB Top" width=500/>  
+<img src="./img/fs65sbc-bot.jpg" alt="PCB Bottom" width=500/>  
 <img src="./img/fs65sbc-1.png" alt="FS65SBC BOARD" width=800/>  
 <img src="./img/fs65sbc-screen2.png" alt="SCREENSHOT2"/>  
 <img src="./img/fs65sbc-screen.png" alt="SCREENSHOT" width=1000/>
