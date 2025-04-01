@@ -1,7 +1,7 @@
 # fs65sbc
 Simple single and small board (99.9 mm x 99.9 mm) computer with 6502/65C02
 
-# Technical data:  
+## Technical data:  
 1x MICROPROCESSOR 65C02 @2MHz  
 1x IDE 8 bit interface for CF card (read speed 86 kB/s)  
 2x SPI interface for SD card  (read speed 5.6 kB/s)  
@@ -23,6 +23,12 @@ Simple single and small board (99.9 mm x 99.9 mm) computer with 6502/65C02
 128 KiB static ram with 8 KiB paged memory  
 8 KiB (e)eprom  
 7 KiB monitor m65  
+
+### fw: monitor m65 for fs65sbc  
+### hw: KICAD files  
+### pld: gal22v10 equations   
+### img: images and photos
+### cpm65: my port of CPM-65 by Dietrich Lausberg https://github.com/dietrich-l to fs65sbc  
 
 Connect the FS65SBC to PC using FT232RL modified USB-SERIAL adapters  
 <img src="./img/ftdi232-t.jpg" alt="Adapter top" width=500/>  
