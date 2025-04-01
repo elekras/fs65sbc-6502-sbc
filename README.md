@@ -2,9 +2,9 @@
 Simple single board computer with 6502/65C02
 
 Technical data:  
-1x MICROPROCESSOR 65C02 @2MHz
-1x IDE 8 bit interface for CF card (read speed 86 kB/s) 
-2x SPI interface for SD card  (read speed 5.6 kB/s)
+1x MICROPROCESSOR 65C02 @2MHz  
+1x IDE 8 bit interface for CF card (read speed 86 kB/s)  
+2x SPI interface for SD card  (read speed 5.6 kB/s)  
 1x SERIAL PORT @38400 baud (38400-8-N-1) interrupt driven with handshake CTS/RTS  
 1x SOFTWARE only tx serial port
 1x SYSTEM Timer 20 mS
