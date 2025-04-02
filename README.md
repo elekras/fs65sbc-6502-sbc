@@ -28,7 +28,7 @@ Simple single and small board (99.9 mm x 99.9 mm) computer with 6502/65C02
 ### hw: KICAD files  
 ### pld: gal22v10 equations   
 ### img: images and photos
-### cpm65: my port of CPM-65 by Dietrich Lausberg https://github.com/dietrich-l to fs65sbc  
+### cpm-65: my port of CPM-65 by Dietrich Lausberg https://github.com/dietrich-l to fs65sbc  
 
 Connect the FS65SBC to PC using FT232RL modified USB-SERIAL adapters  
 <img src="./img/ftdi232-t.jpg" alt="Adapter top" width=500/>  
