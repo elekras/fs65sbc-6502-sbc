@@ -1,0 +1,121 @@
+;BOOT.ASM
+;(c) by D. Lausberg
+
+;Bootstrap Lader fuer den CP/M-Bootsector
+
+;V1.0	30.10.91
+;V1.1	10.11.91	the real thing
+;V1.2	22.05.92	Bootprom version
+;V1.3	20.02.95	new memory map
+;V1.4	31.12.95	SCSI support
+;V1.5	08.10.00	corrrected memory map for sector BIOS
+;V1.6	27.04.21	4 Floppies + SCSI
+;V1.7	12.07.21	3k BIOS
+; 04.04.2025 port to fs65sbc by Fabio Sturman fabio.sturman@gmail.com
+
+
+DMA	= $cE
+TPA	= $200
+CCP	= $ca00
+BIOS	= $d600
+
+;CONSTANTS
+
+CR	= $D
+LF	= $A
+EOT	= $0
+
+;ROM-BIOS ROUTINES
+
+#include "../../m65/m65.i"
+#include "./card.xi65"
+
+;--------------------------------------------
+
+	* = TPA
+
+	JMP BOOT
+
+	.byt 'BOOT'
+LBA0	.BYT 0
+LBA1	.BYT 0
+CNT	.BYT 0
+
+;---  MESSAGES  -----------------------------
+
+BOOTM	.byt 'CP/M-65 Bootstrap Loader V1.7',EOT	;CR,LF,EOT
+ERRM	.byt 'BOOT failed',CR,LF,EOT
+
+;--------------------------------------------
+
+BOOT	LDA #<BOOTM
+	LDY #>BOOTM
+	JSR jmputs
+
+	LDX #0
+	STX LBA1
+	LDA #1
+	STA LBA0
+	LDA #<CCP
+	LDX #>CCP
+	STA DMA
+	STX DMA+1
+
+	LDX #20
+	STX CNT
+
+BOOTL	JSR READ
+	BCS BOOTER
+	INC DMA+1
+	INC LBA0
+	DEC CNT
+	BNE BOOTL
+	JMP BIOS	;RUN CPM
+	
+BOOTER	LDA #<ERRM
+	LDX #>ERRM
+	JSR jmputs
+	rts		;JMP mwrm
+
+READ	LDA LBA0
+	LDX LBA1
+;saves LBA0 and LBA1
+#if CARD = CF
+	JSR jmcfll
+#else
+	JSR jmsdll
+#endif
+	LDA #0
+	TAX
+;saves LBA2 and LBA3
+#if CARD = CF
+	JSR jmcflh	
+#else
+	JSR jmsdlh
+#endif
+	LDA #<BUF512
+	LDX #>BUF512
+;read sector in LBA
+#if CARD = CF
+	JSR jmcfr	
+#else
+	JSR jmsdr
+#endif
+	CMP #0
+	BNE READER
+	LDY #0
+
+READL	LDA BUF512,Y	;buffer used by CF read sector
+	STA (DMA),Y
+	INY
+	BNE READL
+	CLC
+	RTS
+
+READER	SEC
+	RTS
+	
+BUF512
+
+END
+
