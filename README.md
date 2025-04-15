@@ -29,7 +29,7 @@ Simple single and small board (99.9 mm x 99.9 mm) computer with 6502/65C02
 ### pld:    gal22v10 equations   
 ### img:    images and photos
 ### cpm-65: CPM-65 by Dietrich Lausberg https://github.com/dietrich-l for fs65sbc  
-### util:   PC utilities  
+### bin:   PC utilities  
 
 Connect the FS65SBC to PC using FT232RL modified USB-SERIAL adapters  
 <img src="./img/ftdi232-t.jpg" alt="Adapter top" width=500/>  
