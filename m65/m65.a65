@@ -1,0 +1,1672 @@
+;
+;----------------------------------------------------------
+; fsm65 fs monitor for 6502
+; Fabio Sturman (c) 2019,20,21,22,23
+; fabio.sturman@gmail.com
+;----------------------------------------------------------
+; a65 - 6502 assembler file
+; i65 - 6502 include file
+; assembled using cc65 suite
+; assembler: ca65
+; linker: ld65
+;----------------------------------------------------------
+; m65.a65 main module
+;----------------------------------------------------------
+; Memory map gal-v1.7:
+; 0000-dfff   ram
+; a000-bfff   8 pages of 8 KiB of paged ram
+; e000-e3ff   i/o
+;   e000-e0ff acia0
+;   e100-e1ff via0
+;   e200-e3ff ide
+; e000-ffff   rom
+;   c000-e3ff masked by i/o 1 kiB
+;   e400-ffff usable rom 7 kiB
+;             programs in 8 kiB rom
+;             must start @ $0400
+;             rom size 8 kiB
+;----------------------------------------------------------
+; via0:
+; acia0:
+; ide0:
+;  see circuit diagram for detalied
+;  description on usage
+;----------------------------------------------------------
+;
+		.setcpu "65C02"
+		.debuginfo +
+		.include "macros.i65"
+;
+;----------------------------------------------------------
+; constants and i/o
+;----------------------------------------------------------
+;
+DEBUG		= 0
+;
+VERSIONH	= 0		;0..9
+VERSIONL	= 9		;0..9
+;
+CR			= 13
+LF			= 10
+BS			= 8
+DEL			= $7f
+ESC			= 27
+FF			= 12	;form feed
+CTRL_C		= 3		;break
+CTRL_P		= 16
+CTRL_N		= 14
+CTRL_X		= 24	;abort
+BREAK_C		= CTRL_C
+CTRL_G		= 7
+CTRL_T		= 20
+CTRL_H		= 8
+;
+FLAG_RD		= 16
+FLAG_ADD	= 32
+FLAG_LEN	= 64
+FLAG_DATA	= 128
+FLAG_ASCII	= 1
+CMD_BUF_LEN	= 81
+;
+work_area	= $200
+ER_NONE		= 0
+ER_LEN		= 1
+;
+acia0		:= $e000
+via0		:= $e100
+ide0		:= $e200
+;
+	.include "via0.i65"
+	.include "acia0.i65"
+;
+;----------------------------------------------------------
+; sweet16 & monitor zero page
+;----------------------------------------------------------
+;
+		.segment "ZEROPAGE"
+; sweet16 d0-ef
+r0l:	.res 1
+r0h:	.res 1
+		.res 27
+r14h:	.res 1
+r15l:	.res 1
+r15h:	.res 1
+; monitor f0-ff
+ra:		.res 2
+rb:		.res 2
+rc:		.res 2
+rd:		.res 2
+po:		.res 2
+;
+add:	.res 2
+len:	.res 2
+data:	.res 2
+;
+;----------------------------------------------------------
+; monitor work memory
+;----------------------------------------------------------
+;
+		.segment "BUFFERS"
+;
+data_start:
+;
+rx_buf:		.res 128
+tx_buf:		.res 128
+cmd_buf:	.res CMD_BUF_LEN
+;
+rx_cnt:		.res 1
+rx_tail:	.res 1
+rx_head:	.res 1
+;
+tx_cnt:		.res 1
+tx_tail:	.res 1
+tx_head:	.res 1
+breakf:		.res 1	;if<>0 break received
+fsmflags:	.res 1
+last_cmd:	.res 1
+;
+; mon
+;
+irq_vec:	.res 2
+nmi_vec:	.res 2
+brk_vec:	.res 2
+getc_vec:	.res 2
+putc_vec:	.res 2
+jmp_vec:	.res 2
+;
+scany:		.res 1
+count:		.res 2
+chk:		.res 1
+flags:		.res 2
+dout:		.res 1	;acia1
+;
+; sd disk
+;
+sd_lba:		.res 4
+sd_nret:	.res 1
+cf_lba:		.res 4
+;
+; rtc
+;
+temp:
+seconds:	.res 1
+minutes:	.res 1
+hours:		.res 1
+dayweek:	.res 1
+date:		.res 1
+month:		.res 1
+year:		.res 1
+century:	.res 1
+;
+; ram registers
+;
+reg_sp:		.res 1
+reg_pc:		.res 2
+reg_cc:		.res 1
+reg_x:		.res 1
+reg_y:		.res 1
+reg_a:		.res 1
+;
+timer8_4:	.res 1	; buzzer timer
+sys_timer:	.res 4	; system timer
+;
+		.ifdef TIMER8_DEF
+timer8_0:		.res 1
+timer8_1:		.res 1
+timer8_2:		.res 1
+timer8_3:		.res 1
+timer8_0_vec:	.res 2
+timer8_1_vec:	.res 2
+timer8_2_vec:	.res 2
+timer8_3_vec:	.res 2
+		.endif
+;
+data_end:
+;
+;----------------------------------------------------------
+;
+		.segment "CODE"
+;
+code_start:
+;
+	.include "vec.a65"
+	.include "regs.a65"
+;
+sweet_start:
+	.include "sweet16.a65"
+sweet_end:
+sweet_len	:= sweet_end-sweet_start
+;
+	.include "interrupt.a65"
+	.include "acia.a65"
+	.include "timers.a65"
+	.include "get_put.a65"
+	.include "i2c.a65"
+	.include "at24c.a65"
+	.include "tpin.a65"
+	.include "sd_cf.a65"
+;
+;----------------------------------------------------------
+; main monitor entr after reset
+;----------------------------------------------------------
+;
+mcld:
+cold:
+	sei
+	cld
+	ldx #$FF
+	txs
+;
+	cli
+	jsr init
+	print_cr_lf
+	jsr sd_init
+	jsr put_error
+	jsr cf_init
+	jsr put_error
+;
+	print_s msg_greetings
+	jsr time_rd
+	mov_n2x work_area, add
+	mov_n2x $0100, len
+	mov_n2x $0000, data
+	lda #0
+	jmp warm
+;
+; initialization routine
+;
+init:
+	stz fsmflags		;bit 7 buzzer, bit 6 echo, bit 5 sd init
+	lda #$80
+	sta fsmflags
+	jsr pmu_init		;paged memory unit
+	jsr acia_init
+	jsr acia1_init
+	jsr i2c_init                
+	jsr rtc_init
+	jsr tpin_init
+	;jsr tpin_0
+	jsr timers_init
+	jsr buzzer_init 
+;
+	stz last_cmd
+	stz reg_a
+	stz reg_x
+	stz reg_y
+	tsx
+	stx reg_sp
+	lda #0		;z=0
+	clc			;c=0
+	php
+	pla
+	and #%11111011	;clear interrupt flag (cli)
+	sta reg_cc
+;              
+; init main vectors
+;
+	mov_n2x $200, reg_pc
+	mov_n2x brk_exe, brk_vec
+	mov_n2x via_int, irq_vec	;acia_int, irq_vec
+	mov_n2x int_exit, nmi_vec
+	mov_n2x put_c_blk, putc_vec
+	mov_n2x get_c_blk, getc_vec
+initq:
+	rts
+;
+put_error:
+	cmp #ER_NONE
+	beq @q
+	pha
+	print_s msg_err
+	pla
+	jsr put_c_hex
+	jsr put_cr_lf
+	jsr beep
+@q:
+	rts
+;
+;----------------------------------------------------------
+; Messages/strings
+;----------------------------------------------------------
+;
+msg_prompt:
+	.byte "$", 0
+msg_n_row:
+	.byte "       0  1  2  3  4  5  6  7  8  9  A  B  C  D  E  F", 0
+msg_c_row:
+	.byte "      0 1 2 3 4 5 6 7 8 9 A B C D E F", 0
+;
+;;TST	.byte TIMES
+msg_greetings:
+	.byte "m65 - fs65sbc monitor - Ver "
+	.byte VERSIONH+$30, '.', VERSIONL+$30, " (c) 2019-25 - "
+	.include "date.i65"
+	.byte CR, LF, 0
+	.byte "by F. Sturman - fabio.sturman@gmail.com - h|?=help", CR, LF
+
+msg_help:
+;	.byte "No HELP!", CR, LF, 0
+;	.if 0
+	.byte "D<a>,<l> hex dump | A<a>,<l> ascii dump", CR, LF
+	.byte "F<a>,<l>,<d> fill | J<a> jump", CR, LF
+	.byte "M<s>,<l>,<d> move | C<a> change", CR, LF
+	.byte "W<a> watch        | X<a>,<d>,<m> r/w memory", CR, LF
+	.byte "E edit regs       | P print regs", CR, LF
+	.byte "Y sys timer       | O, O0 boot CF; O1 boot SD", CR, LF
+	.byte "# xxx comment     | H, ? help", CR, LF
+	.byte "L<lbal><l><a> load SD | S<lbal><l><a> save SD", CR, LF
+	.byte "U<lbal><l><a> load CF | V<lbal><l><a> save CF", CR, LF
+	.byte "Z, Z0 reset CF - Z1 reset SD", CR, LF
+	.byte "Q<p><l><a> read  at24c256 p=page64 0..511, a=mem address", CR, LF
+	.byte "K<p><l><a> write at24c256 l=n of pages 1..512", CR, LF
+	.byte "G[<lbah>] SD lba 2,3  | B<lbah>] CF lba 2,3", CR, LF
+	.byte "N[<p>] set/get pmu page", CR, LF
+	.byte "T<a>,<l> tx intel hex", CR, LF
+	.byte ":... rx intel hex record", CR, LF
+	.byte "I[hh:mm:ss DD.MM.YYYY] get/set time", CR, LF
+	.byte "^X cancel input, BS cancel char, ^BREAK stop output", CR, LF
+	.byte 0
+;	.endif
+;
+msg_hex_end_record:
+	.byte ":00000001FF", 0
+;
+msg_err:
+	.byte "Error: ", 0
+;
+msg_break:
+	.byte "Break", 0 
+;
+;----------------------------------------------------------
+;
+mwrm:
+warm:
+	cld
+	cli
+;
+; command lop
+; entry point after command execution
+;
+cmd_loop:
+	jsr put_error
+;
+; print prompt
+;
+cmd_loopc:
+	print_s msg_prompt
+	jsr get_s
+	bcs cmd_loopc	;aborted with ctrl-x
+	jsr scani		;get first ch from buf
+	beq cmd_repeat	;if buf empty repeat
+	jsr toupper
+	cmp #'A'
+	bcc cmd_nolit	;test if # or :
+;	cmp #$5b ;'['
+	cmp #'^'
+	bcc cmd_decoder	;is alpha - decode
+	bcs cmd_loop
+;
+; command repeat
+;
+cmd_repeat:   
+	lda last_cmd	;repeat last command if a, d or i
+	sta cmd_buf		;fill cmd_buf with <last_cmd_char><nul>
+	stz cmd_buf+1
+	lda last_cmd
+	cmp #'A'
+	beq cmd_decoder
+	cmp #'D'
+	beq cmd_decoder
+	cmp #'I'
+	beq cmd_decoder
+	cmp #'Y'
+	beq cmd_decoder            
+	bne cmd_loopc
+;
+; test non litteral commands #, :
+;
+cmd_nolit:
+	cmp #'#'		;is comment
+	beq cmd_loopc
+	cmp #':'		;is receive hex record
+	bne @1
+	lda #'R'		;change : to R
+	bra cmd_decoder
+@1:
+	cmp #'?'
+	bne cmd_loop	; unk cmd
+	lda #'H'
+;
+; command decoder
+;
+cmd_decoder:   
+	sta last_cmd
+	tay
+	stz breakf
+	lda #>(cmd_loop-1)
+	pha
+	lda #<(cmd_loop-1)
+	pha
+	tya
+	sec
+	sbc #'A'
+	asl a
+	tax
+	lda cmd_table+1,x
+	pha
+	lda cmd_table,x
+	pha
+	rts
+;
+; command address table
+;
+cmd_table:
+	.word cmd_dumpa-1		;a ascii dump
+	.word cmd_cflh-1		;b cf load lba hi
+	.word cmd_modify-1		;c modify memory
+	.word cmd_dump-1		;d dump
+	.word cmd_edit_regs-1	;e edit registers
+	.word cmd_fill-1		;f fill
+	.word cmd_sdlh-1		;g get/set lba 2,3
+	.word cmd_help-1		;h help
+	.word cmd_time-1		;i time
+	.word cmd_jump-1		;j jump
+	.word cmd_at24cwr-1		;k write eeprom at24c256
+	.word cmd_sdl-1			;l load_blocks
+	.word cmd_move-1		;m move
+	.word cmd_pmu-1			;n set/get pmu page
+	.word cmd_boot-1		;o boot from cf
+	.word cmd_print_regs-1	;p print registers
+	.word cmd_at24crd-1		;q read eeprom at24c256
+	.word cmd_rxhex-1		;r rx intel hex record
+	.word cmd_sds-1			;s save_blocks
+	.word cmd_txhex-1		;t tx intel hexime
+	.word cmd_cfl-1			;u load block cf
+	.word cmd_cfs-1			;v save block cf
+	.word cmd_watch-1		;w watch memory
+	.word cmd_memory-1		;x r w or and xor memory
+	.word cmd_sys_timer-1	;y read sys timer
+	.word cmd_sci-1			;z init SD, CF
+	.word cmd_rts-1			;[ 
+	.word cmd_empty-1		;\ 
+	.word cmd_empty-1		;]
+;
+cmd_rts:
+	pla
+	pla
+	rts
+;
+;----------------------------------------------------------
+; cmd_help - "H" - print help test
+; cmd_empty - empty command
+;----------------------------------------------------------
+;
+cmd_help:
+	print_s msg_greetings
+	print_s msg_help
+	rts
+;
+mcmde:
+cmd_empty:
+	lda #0
+	rts
+;
+;----------------------------------------------------------
+; pmu - paged memory unit
+; N[<page>] - reads sets page
+;----------------------------------------------------------
+;
+pmu_init:
+	lda porta0 ; page=0
+	and #$f8
+	sta porta0
+;
+; porta[0,1,2] output
+;
+	lda ddra0
+	and #$f8
+	ora #$07
+	sta ddra0
+	rts
+;
+; set page A=n. page 0..7
+;
+mpmuw:
+pmu_set:
+	and #$07
+	sta chk
+	lda porta0
+	and #$f8
+	ora chk
+	sta porta0
+	rts
+;
+; get page
+;
+mpmur:
+pmu_get:
+	lda porta0
+	and #7
+	ldx #0
+	rts
+;
+; N command
+;
+cmd_pmu:
+	jsr scan
+	beq @0
+	jsr pmu_set
+@0:
+	lda porta0
+	and #7
+	jsr put_nib_hex
+;
+no_er:
+	jsr put_cr_lf
+no_er0:
+	lda #ER_NONE
+	rts
+;
+;----------------------------------------------------------
+; RTC
+;----------------------------------------------------------
+; time - get/set time from rtc
+; if no prameters prints current time
+; else scans input buffer for data
+; "I[hh:mm:ss DD.MM.YYYY]"
+; no test on data validity
+;----------------------------------------------------------
+;
+DS3231	:= $d0
+;
+cmd_time:
+	jsr scan
+	bne time_wr
+;
+; print time
+;
+time_rd:
+	jsr rtc_read
+	lda hours
+	and #$3f		;clear 12/24 flag
+	jsr put_c_hex
+	lda #':'
+	jsr put_c
+	lda minutes
+	jsr put_c_hex
+	lda #':'
+	jsr put_c
+	lda seconds
+	jsr put_c_hex
+	jsr put_sp
+;
+; print date
+;
+	lda date
+	jsr put_c_hex
+	lda #'.'
+	jsr put_c
+	lda month
+	jsr put_c_hex
+	lda #'.'
+	jsr put_c
+	lda century
+	jsr put_c_hex
+	lda year
+	jsr put_c_hex
+	jmp no_er
+;
+; set rtc from cmd_buf+1
+; no test on values
+;
+time_wr:
+	jsr scani      ;discald first ch
+	jsr get_b_bcd   ;read h
+	sta hours
+	jsr scan        ;skip separator
+	jsr get_b_bcd   ;m
+	sta minutes
+	jsr scan
+	jsr get_b_bcd   ;s
+	sta seconds
+	jsr scan
+	jsr get_b_bcd   ;date
+	sta date
+	jsr scan
+	jsr get_b_bcd   ;month
+	sta month
+	jsr scan
+	jsr get_b_bcd   ;century
+	sta century
+	jsr get_b_bcd   ;year
+	sta year
+;
+	jsr rtc_write
+	jmp time_rd
+;
+; reads rtc and puts data in seconds, ....year,century
+;
+mrtcr:
+rtc_read:
+	jsr i2c_init ;idle
+	jsr i2c_start
+	lda #DS3231
+	jsr i2c_write
+	beq @0			; if ack continue
+	jsr i2c_init	;idle    ; else return
+	sec
+	rts
+@0:
+	lda #0			; start with reg=0
+	jsr i2c_write
+	jsr i2c_stop
+	jsr i2c_start
+	lda #DS3231+1
+	jsr i2c_write
+	jsr i2c_read	;s
+	sta seconds
+	jsr i2c_ack
+	jsr i2c_read	;min
+	sta minutes
+	jsr i2c_ack
+	jsr i2c_read	;h
+	sta hours
+	jsr i2c_ack
+	jsr i2c_read	;day of week
+	sta dayweek
+	jsr i2c_ack
+	jsr i2c_read	;date
+	sta date
+	jsr i2c_ack
+	jsr i2c_read	;month
+	sta month
+	jsr i2c_ack
+	jsr i2c_read	;year
+	sta year
+	jsr i2c_nack
+	jsr i2c_stop
+	ldx #$20
+	stx century
+	lda month		;clear century bit
+	and #$7f
+	sta month
+	clc
+	lda #<seconds   ;return pointer do data
+	ldx #>seconds
+	rts
+;
+; writes rtc regs from seconds,... year,century
+;
+mrtcw:
+rtc_write:
+	jsr i2c_init	;idle
+	jsr i2c_start
+	lda #DS3231
+	jsr i2c_write
+	beq rtc_write_0		; test for rtc if ok continue
+	jsr i2c_init		; else return
+rtc_write_e:
+	sec
+	rts
+;                
+rtc_write_0:
+	lda #0
+	jsr i2c_write
+	lda seconds		;s
+	jsr i2c_write
+	lda minutes		;min
+	jsr i2c_write
+	lda hours		;h
+	jsr i2c_write
+	lda dayweek		;#1 ;week day
+	jsr i2c_write
+	lda date		;d
+	jsr i2c_write
+	lda month
+	jsr i2c_write
+	lda year		;y
+	jsr i2c_write
+	jsr i2c_stop
+;
+rtc_init:
+	jsr i2c_start	; restart rts ando no sqare wave on int pin
+	lda #DS3231
+	jsr i2c_write                 
+	lda #$0E
+	jsr i2c_write
+	lda #4
+	jsr i2c_write
+	lda #0
+	jsr i2c_write
+	jsr i2c_stop
+	clc
+	rts    
+;
+;----------------------------------------------------------
+; SDCARD
+;----------------------------------------------------------
+; sd_read_block_h - G[<lba_h>] reads lba_h and prints lba_h
+;----------------------------------------------------------
+;
+cmd_sdlh:
+	jsr get_par
+	bit_test flags, FLAG_ADD
+	bne @1        
+@0:
+	lda sd_lba+2
+	ldy sd_lba+3
+	jsr put_w_hex
+	jmp no_er
+@1:
+	mov_x2ax add
+	jsr sd_set_sector_h
+	bra @0
+;
+;----------------------------------------------------------
+; save_blocks - "S<start_block_l>,<num_of_blocks>,<addr>"
+; save memory to sd card
+;----------------------------------------------------------
+;
+cmd_sds:
+	jsr get_par
+	test_x len
+	beq @e
+@l:
+	mov_x2ax add			;block num
+	jsr sd_set_sector_l
+	mov_x2ax data			;buf add
+	jsr sd_write_sector
+	cmp #0
+	bne @q
+	print_c '.'
+	inc data+1
+	inc data+1
+	inc_x add			;block num ++
+	dec_x len			;num blocks --
+	bne @l
+	jmp no_er
+@e:
+	lda #ER_LEN
+@q:
+	jmp put_cr_lf
+;
+;----------------------------------------------------------
+; load_blocks - L<start_block>,<num_of_blocks>,<addr>"
+; load data from sd card to memory start_block=0.. 
+;----------------------------------------------------------
+cmd_sdl:
+	jsr get_par
+	test_x len
+	beq cmd_sdle
+cmd_sdll:
+	mov_x2ax add            ;block num
+	jsr sd_set_sector_l
+	mov_x2ax data           ;buf add
+	jsr sd_read_sector
+	cmp #0
+	bne cmd_sdlq
+	print_c '.'
+	inc data+1
+	inc data+1
+	inc_x add        ; block num ++
+	dec_x len        ; num blocks --
+	bne cmd_sdll
+	jmp no_er
+cmd_sdle:
+	lda #ER_LEN
+cmd_sdlq:
+	jmp put_cr_lf
+;
+;----------------------------------------------------------
+; CF - COMPACT FLASH
+;----------------------------------------------------------
+; cmd_cflh cf read lba hi
+; G[<lba_h>] reads lba_h and prints full lba
+;----------------------------------------------------------
+;
+cmd_cflh:
+	jsr get_par
+	bit_test flags, FLAG_ADD
+	bne @1
+@0:
+	lda cf_lba+2
+	ldy cf_lba+3
+	jsr put_w_hex
+	jmp no_er
+@1:
+	mov_x2ax add
+	jsr cf_set_sector_h
+	bra @0
+;
+;----------------------------------------------------------
+; cmd_cfs - "V<start_block_l>,<number_of_blocks>,<address>"
+; save memory to cf card
+;----------------------------------------------------------
+;
+cmd_cfs:
+	jsr get_par
+	test_x len
+	beq @e
+@l:
+	mov_x2ax add        ;block num
+	jsr cf_set_sector_l
+	mov_x2ax data       ;buf add
+	jsr cf_wrs
+	cmp #0
+	bne @q
+	print_c '.'
+	inc data+1
+	inc data+1
+	inc_x add           ;block num ++
+	dec_x len           ;num blocks --
+	bne @l
+	jmp no_er
+@e:
+	lda #ER_LEN
+@q:
+	jmp put_cr_lf
+;
+;----------------------------------------------------------
+; cmd_cfl -  "U<start_block>,<number_of_blocks>,<address>"
+; load data from cf card to memory start_block=0.. 
+;----------------------------------------------------------
+;
+cmd_cfl:
+	jsr get_par
+	test_x len
+	beq cmd_cfle
+cmd_cfll:
+	mov_x2ax add		; block num
+	jsr cf_set_sector_l
+	mov_x2ax data		; buf add
+	jsr cf_rds
+	cmp #0
+	bne cmd_cflq
+	print_c '.'
+	inc data+1
+	inc data+1
+	inc_x add			; block num ++
+	dec_x len			; num blocks --
+	bne cmd_cfll
+	jmp no_er
+cmd_cfle:
+	lda #ER_LEN
+cmd_cflq:
+	jmp put_cr_lf
+;
+;----------------------------------------------------------
+; cmd_boot  - O or O0  boot CF -O1 boot SD
+; boot cpm-65 - load first sector @$0200, test for string
+; "BOOT" and if ok jump to $0200  
+;----------------------------------------------------------
+;
+boot_ad:=$0200
+msg_boot:
+	.byte "Booting...",13,10,0
+msg_no_boot:
+	.byte "No BOOT sector!",13,10,0
+;
+cmd_boot:
+;	print_s msg_boot
+	jsr get_par
+	bit_test flags, FLAG_ADD
+	beq @cf
+	lda add
+	and #1
+	bne @sd
+@cf:
+    mov_n2ax 0        ;lba0,1
+    jsr cf_set_sector_l
+    mov_n2ax 0        ;lba2,3
+    jsr cf_set_sector_h
+    mov_n2ax boot_ad   ;dma
+    jsr cf_rds
+@cfsd:
+    cmp #0
+    bne @e
+    lda boot_ad+3
+    cmp #'B'
+    bne @e
+    lda boot_ad+4
+    cmp #'O'
+    bne @e
+    lda boot_ad+5
+    cmp #'O'
+    bne @e
+    lda boot_ad+6
+    cmp #'T'
+    bne @e
+    jmp boot_ad
+;
+@e: print_s msg_no_boot
+    rts
+@sd:
+    mov_n2ax 0        ;lba0,1
+    jsr sd_set_sector_l
+    mov_n2ax 0        ;lba2,3
+    jsr sd_set_sector_h
+    mov_n2ax boot_ad   ;dma
+    jsr sd_rds
+    bra @cfsd
+;
+;----------------------------------------------------------
+; cmd_sci - init sd|cf ; Z | Z0 - init cf,  Z1 - init sd
+;----------------------------------------------------------
+;
+cmd_sci:
+	jsr get_par
+	bit_test flags, FLAG_ADD
+	beq @e
+	lda add
+	and #1
+	beq @e
+	jsr sd_init
+	bra @q
+@e:
+	jsr cf_init
+@q:
+	jmp put_cr_lf
+;
+;----------------------------------------------------------
+; cmd_memory - read write memory
+; "X<memory_add>,<data>,<mode>"
+; <mode>=0 for write, 1 for or, 2 for and, 3 for xor
+; <mode>=1 (mem_add)=(mem_add) | & ^ data
+;----------------------------------------------------------
+;
+cmd_memory:
+	jsr get_par
+	lda data
+	and #$03        ; only 2 bits
+	beq @0
+	cmp #1
+	beq @1
+	cmp #2
+	beq @2
+@3:
+	lda (add)	; read, xor, write
+	eor len
+	sta (add)
+	bra @q
+@2:
+	lda (add)	;read. and, write
+	and len
+	sta (add)
+	bra @q
+@1:
+	lda (add)	; read, or, write
+	ora len
+	sta (add)
+	bra @q
+@0:
+	lda len		; write
+	sta (add)
+@q:
+	lda #0
+	rts
+;
+;----------------------------------------------------------
+; put_c_bin - print_regs
+;----------------------------------------------------------
+; print a in binary
+;
+put_c_bin:
+	ldy #8
+@0:
+	rol a
+	tax
+	lda #'0'
+	bcc @1
+	adc #0
+@1:
+	jsr put_c
+	txa
+	dey
+	bne @0
+	rts
+;
+t_a:	.byte "   A:", 0
+t_x:	.byte "   X:", 0
+t_y:	.byte "   Y:", 0
+t_sp:	.byte "  SP:", 0
+t_cc:	.byte "  CC:", 0
+t_pc:	.byte "  PC:", 0
+t_sf:	.byte "     NV-BDIZC", CR, LF, 0
+;
+cmd_print_regs:
+	print_s t_sf
+	print_s t_cc
+	lda reg_cc
+	jsr put_c_bin
+	print_s t_a
+	lda reg_a
+	jsr put_c_hex
+	print_s t_x
+	lda reg_x
+	jsr put_c_hex
+	print_s t_y
+	lda reg_y
+	jsr put_c_hex
+	print_s t_sp
+	lda reg_sp
+	jsr put_c_hex
+	print_s t_pc
+	mov_x2ay reg_pc
+	jsr put_w_hex
+	jmp no_er
+;
+;----------------------------------------------------------
+; cmd_edit_regs - change/edit regs "E"
+;----------------------------------------------------------
+; a
+cmd_edit_regs:
+	print_s t_a
+	lda reg_a
+	jsr edit_regs_c
+	bcs @x
+	sta reg_a
+@x:
+	print_s t_x
+	lda reg_x
+	jsr edit_regs_c
+	bcs @y
+	sta reg_x
+@y:
+	print_s t_y
+	lda reg_y
+	jsr edit_regs_c
+	bcs @sp
+	sta reg_y
+@sp:
+	print_s t_sp
+	lda reg_sp
+	jsr edit_regs_c
+	bcs @cc
+	sta reg_sp
+@cc:
+	print_s t_cc
+	lda reg_cc
+	jsr edit_regs_c
+	bcs @pc
+	sta reg_cc
+@pc:
+	print_s t_pc
+	mov_x2ay reg_pc
+	jsr put_w_hex
+	jsr edit_regs_c1
+	bcs @q
+	sta reg_pc
+	sty reg_pc+1
+@q:
+	lda #0
+	rts
+;
+edit_regs_c:
+	jsr put_c_hex
+edit_regs_c1:
+	jsr put_sp
+	jsr get_s
+	bcc @0
+	pla			; CTRL-X
+	pla
+	lda #0
+	rts
+@0:
+	ldy #$ff
+	sty scany
+	jsr get_par
+	bit_test flags, FLAG_ADD
+	bne @q
+	sec
+	rts
+@q:
+	lda add		;add entered
+	ldy add+1
+	clc
+	rts
+;
+;----------------------------------------------------------
+; cmd_jump - jump @add if add present else jump @reg_pc
+;----------------------------------------------------------
+;
+cmd_jump:
+	jsr get_par
+	bit_test flags, FLAG_ADD
+	beq @0
+	mov_x2y add, reg_pc
+@0:
+	jmp run_target
+;
+;----------------------------------------------------------
+; cmd_watch - watch memory location
+;----------------------------------------------------------
+;
+cmd_watch:
+	jsr get_par
+	mov_x2y add, ra
+	print_w_hex ra
+	print_c ':'
+	print_sp
+@1:
+	ldy #0
+	lda (ra),y
+	jsr put_c_hex
+	jsr tbreak
+	bcc @2
+	jmp no_er
+@2:
+	ldy #100	;50ms
+	jsr delayhalfms
+	print_c BS
+	print_c BS
+	bra @1
+;
+;----------------------------------------------------------
+; cmd_rxhex - rx intel hex file & store data in mem
+;----------------------------------------------------------
+; parse line ":LLAAAATTDDDDDDD...DDDCC"
+;
+cmd_rxhex:
+	lda #0		;chk<=0
+	sta chk
+	jsr scani
+	cmp #':'          ;: start
+	bne @er
+	jsr get_c_hex_chk ;rec len
+	bcs @er
+	sta len
+	beq @20		; if len==0 empty record
+	jsr get_c_hex_chk	;adh
+	bcs @er
+	sta ra+1
+	jsr get_c_hex_chk ;adl
+	bcs @er
+	sta ra
+	jsr get_c_hex_chk	;rec type
+	bcs @er
+	cmp #0
+	bne @er
+	lda len
+	sta count
+@1:
+	jsr get_c_hex_chk
+	bcs @er
+	dec count
+	bne @1
+;
+; read txed chk and add, sum must be 0
+;
+	jsr get_c_hex_chk
+	bcs @er
+	lda chk
+	bne @er
+;
+; read data and store
+;
+	lda #8		; read only data from 9
+	sta scany
+@2:
+	jsr get_c_hex
+	sta (ra)
+	inc_x ra
+	dec len		;count ;dex
+	bne @2
+@20:
+	jmp no_er0
+@er:
+	lda #$30
+	jmp is_er
+;
+;----------------------------------------------------------
+; get_c_hex_chk - read hex byte & chk+=b
+;----------------------------------------------------------
+;
+get_c_hex_chk:
+	jsr get_c_hex
+	bcs @q
+	jsr add_chk
+	clc
+@q:
+	rts
+;
+;----------------------------------------------------------
+; cmp_s - compare string in (ay) to (po)
+;----------------------------------------------------------
+;
+cmp_s:
+	sta ra
+	sty ra+1
+	ldy #0
+@0:
+	lda (po),y
+	beq @q
+	cmp (ra),y
+	bne @q
+	iny
+	bra @0
+@q:
+	rts
+;
+;----------------------------------------------------------
+; cmd_txhex - transmitt block in intel hex
+;----------------------------------------------------------
+;
+cmd_txhex:
+	jsr get_par
+	test_x len
+	bne @00
+	rts
+@00:
+	mov_x2y len, ra
+	mov_x2y add, rc
+	mov_n2x 16, rb
+@0:
+	jsr cmp_ra2rb
+	bcc @1			;len<16
+	lda #16
+	sta count
+	jsr sub_rb2ra
+	bra @2
+@1:
+	lda ra
+	sta count
+	stz ra
+@2:
+	print_c ':'
+	stz chk
+	lda count
+	jsr put_c_hex_chk	;ckh+=len
+	lda rc+1			;chk+=ad chk+=ad+1 print add
+	jsr put_c_hex_chk
+	lda rc
+	jsr put_c_hex_chk
+	lda #0				;record type=00
+	jsr put_c_hex_chk
+@3:
+	lda (rc)
+	jsr put_c_hex_chk
+	inc_x rc
+	dec count
+	bne @3
+	lda chk
+	jsr two_complement
+	jsr put_c_hex
+	jsr put_cr_lf
+	test_x ra
+	bne @0			;continue
+; last record
+lastrec:
+	mov_n2ay msg_hex_end_record
+	jsr put_s
+	jmp no_er
+;
+;----------------------------------------------------------
+; put_c_hex_chk - print hex char & chk+=acc
+;----------------------------------------------------------
+;
+put_c_hex_chk:
+	jsr add_chk
+	jmp put_c_hex
+;
+;----------------------------------------------------------
+; add_chk -  chk+=acc
+;----------------------------------------------------------
+;
+add_chk:
+	pha
+	clc
+	adc chk
+	sta chk
+	pla
+	rts
+;
+two_complement:
+	eor #$ff
+	clc
+	adc #1
+	rts
+;
+;----------------------------------------------------------
+; move - move block of data source, length, destination
+;----------------------------------------------------------
+;
+src		= add
+dst		= data
+;
+cmd_move:
+	jsr get_par
+	test_x len
+	beq @dnq
+;	lda #$ff
+;	sta count
+	mov_x2y dst, ra
+	mov_x2y src, rb
+	jsr cmp_ra2rb
+	bcs @0
+	bcc @dn
+@0:
+	mov_x2y len, ra
+	jsr add_rb2ra
+	mov_x2y dst, rb
+	jsr cmp_ra2rb
+	bcs @up
+@dn:
+	mov_x2y src, ra   ; move data from begin
+	mov_x2y dst, rb
+	mov_x2y len, rc
+	ldy #255
+@dn0:
+	lda (ra)
+	sta (rb)
+	;;inc count
+	iny
+	bne @dn1
+	print_c '.'
+@dn1:
+	inc_x ra
+	inc_x rb
+	dec_x rc
+	bne @dn0
+@dnq:
+	jmp no_er
+;
+@up:
+	mov_x2y src, ra ; move data from end
+	mov_x2y len, rb
+	jsr add_rb2ra
+	mov_x2y ra, po ;src
+	mov_x2y dst, ra
+	jsr add_rb2ra  ;dst+l->ra
+	mov_x2y po, rb ;src+l->rb
+	mov_x2y len, rc ;l->rc
+	dec_x ra
+	dec_x rb
+	ldy #255
+@up0:
+	lda (rb)
+	sta (ra)
+	;inc count
+	iny
+	bne @up1
+	print_c '.'
+@up1:
+	dec_x ra
+	dec_x rb
+	dec_x rc
+	bne @up0
+	jmp no_er
+;
+;----------------------------------------------------------
+; cmd_modify - modify memory @ address
+;----------------------------------------------------------
+;
+cmd_modify:
+	jsr get_par
+	mov_x2y add, rc
+@0:
+	print_w_hex rc
+	print_c ':'
+	print_sp
+	lda (rc)
+	jsr put_c_hex
+	jsr put_sp
+	jsr get_s
+	bcs @q
+	lda #$ff	; init scan
+	sta scany
+	jsr get_par
+	bit_test flags, FLAG_ADD ;test if data
+	beq @1
+	lda add
+	sta (rc)
+@1:
+	inc_x rc
+	bra @0
+@q:
+	lda #0
+	rts
+;
+;----------------------------------------------------------
+; cmd_fill - fill block address, length, data
+;----------------------------------------------------------
+;
+cmd_fill:
+	jsr get_par
+	test_x len
+	beq @q
+	mov_x2y add, ra
+	mov_x2y len, rb
+	lda #$ff
+	sta count
+@0:
+	inc count
+	bne @1
+	print_c '.'
+@1:
+	lda data
+	sta (ra)
+	inc_x ra
+	dec_x rb
+	bne @0
+	mov_x2y add, ra
+	mov_x2y len, rb
+	jsr add_rb2ra
+	mov_x2y ra, add
+@q:
+	jmp no_er
+;
+;----------------------------------------------------------
+; get_par - read 4 parameters from cmd_buf and store in
+;           add, len, data, rd
+; flags[4]==1 if rd ok
+; flags[5]==1 if add ok
+; flags[6]==1 if len ok
+; flags[7]==1 if data ok
+;----------------------------------------------------------
+;
+get_par:
+	bit_clear flags, (FLAG_DATA | FLAG_ADD | FLAG_LEN | FLAG_RD)	;%11110000
+	jsr scan
+	beq @eq			;q
+	cmp #','
+	beq @len
+	jsr is_hex		;add
+	bcs @cs			;q
+	jsr get_hex
+	mov_x2y ra, add
+	bit_set flags, FLAG_ADD
+	jsr scan0
+	beq @q
+	cmp #','
+	bne @q
+@len:
+	jsr scan
+	beq @q
+	cmp #','
+	beq @data
+	jsr is_hex
+@cs:
+	bcs @q
+	jsr get_hex		;len
+	mov_x2y ra, len
+	bit_set flags, FLAG_LEN
+	jsr scan0
+	beq @q
+	cmp #','
+	bne @q
+@data:
+	jsr scan
+@eq:
+	beq @q
+	cmp #','
+	beq @rd
+	jsr is_hex
+	bcs @q
+	jsr get_hex		;len
+	mov_x2y ra, data
+	bit_set flags, FLAG_DATA
+	jsr scan0
+	beq @q
+	cmp #','
+	bne @q
+@rd:
+	jsr scan
+	beq @q
+	jsr is_hex		;data
+	bcs @q
+	jsr get_hex
+	mov_x2y ra, rd
+	bit_set flags, FLAG_RD
+@q:
+	lda flags
+	rts
+;
+;----------------------------------------------------------
+; dump - hex/ascii dump memory
+;----------------------------------------------------------
+;
+FLAG_OVER	= 2
+;
+cmd_dumpa:
+	bit_set flags, FLAG_ASCII
+	bra dump
+cmd_dump:
+	bit_clear flags, FLAG_ASCII
+dump:
+;;	jsr put_cr_lf
+	jsr get_par
+	test_x len
+	bne @000
+	rts
+@000:
+	lda add
+	and #$f0
+	sta ra
+	lda add+1
+	sta ra+1
+	bit_clear flags, FLAG_OVER
+	mov_x2y add, rb
+	mov_x2y len, rc
+;
+; print("      00 01..");
+;
+	bit_test flags, FLAG_ASCII
+	bne @00
+	print_s msg_n_row
+	bcc @0
+@00:
+	print_s msg_c_row
+;
+; for(t=add0;l>0;t++) {
+;   if(t&0x000f==0) print("0000:");
+;
+@0:
+	test_x rc
+	bne @100
+	bra @4
+@100:
+	lda ra
+	and #$0f
+	bne @1
+	print_cr_lf
+	jsr tbreak
+	bcc @10
+	jmp no_er
+@10:
+	print_w_hex ra         ; print address
+	lda #':'
+	jsr put_c
+;
+; if(t<add) print("   "); else {if(l) { print(data); l--} else exit; }
+;
+@1:
+	bit_test flags, FLAG_OVER
+	bne @2
+	jsr cmp_ra2rb
+	bcc @20   ; print "   "
+	bit_set flags, FLAG_OVER
+@2:
+	test_x rc
+	beq @4
+	print_sp   ; print data
+	lda (ra)
+	tay
+	bit_test flags, FLAG_ASCII
+	bne @2a
+	tya           ; hex
+	jsr put_c_hex
+	bra @2b
+@2a:
+	tya          ; ascii
+	cmp #' '
+	bcc @2a0
+	cmp #$80
+	bcs @2a0
+	jsr put_c               
+	bra @2b
+@2a0:
+	lda #'.'
+	jsr put_c                
+@2b:
+	dec_x rc
+	bra @3
+@20:
+	jsr put_sp
+	jsr put_sp
+	bit_test flags, FLAG_ASCII
+	bne @3
+	jsr put_sp
+@3:
+	inc_x ra
+	jmp @0
+@4:
+	print_cr_lf
+	bit_test flags, FLAG_ASCII
+	bne @40
+	print_s msg_n_row
+	bcc @5
+@40:
+	print_s msg_c_row
+@5:
+	mov_x2y add, ra
+	mov_x2y len, rb
+	jsr add_rb2ra
+	mov_x2y ra, add
+@6:
+	bit_clear flags, FLAG_ASCII
+@60:
+	jmp no_er
+@7:
+	jmp is_er
+;
+;**********************************
+	.if 0
+;ra=addr & $fff0
+	lda addr
+	and #$f0
+	sta rc
+	lda addr+1
+	sta rc+1
+;
+	movx2y addr, ra
+	movx2y len, rb
+	jsr add_rb2ra
+	lda ra
+	sta data
+	and #$f0
+	sta datard
+	lda ra+1
+	sta rd+1
+
+toprntbl:
+	cmp #$21
+	bcc @c
+	cmp #$7e
+	bcs @c
+	rts
+@c:
+	lda #'.'
+	rts
+	.endif
+;**********************************
+;
+is_er:
+	pha
+	jsr put_cr_lf
+	pla
+	rts
+;
+;
+; tbreak - test if break pressed
+;    
+mtbrk:            
+tbreak:
+	lda breakf
+	beq @cc
+	stz breakf
+	print_s msg_break
+	sec
+	bra @q
+@cc:
+	clc
+@q:
+    rts
+;
+code_end:
+;
+code_len	:= code_end - code_start
+data_len	:= data_end - data_start
+;
+;----------------------------------------------------------
+;
+	.segment "VECTORS"
+;
+; nmi
+; reset
+; irq
+;
+res_handler	:= mcld
+	.word nmi_handler
+	.word res_handler
+	.word irq_handler
+;

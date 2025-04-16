@@ -1,0 +1,7 @@
+; acia0
+acia_data		:= acia0
+acia_status		:= acia0+1
+acia_reset		:= acia0+1
+acia_command	:= acia0+2
+acia_control	:= acia0+3
+
