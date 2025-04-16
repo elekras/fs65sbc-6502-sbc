@@ -1,0 +1,183 @@
+;-----------------------------------------------------------------------------
+; fsm65 fs monitor for 6502
+; Fabio Sturman (c) 2019,20,21,25
+; fabio.sturman@gmail.com
+;-----------------------------------------------------------------------------
+; i2c.a65
+; i2c module through via0 6522
+; SDA=pa7
+; SCL=pa6
+;-----------------------------------------------------------------------------
+;
+SDA   = (1 << 7)
+SCL   = (1 << 6)
+
+;
+mi2cini:
+i2c_init:
+	jsr i2cdh
+	jmp i2cch
+;
+; i2cwb - write byte
+; uses x
+;
+mi2cwrt:
+i2c_write:
+i2cwb:
+	jsr i2ccl
+	ldx #8
+;
+i2cwb_l:
+	rol
+	bcc i2cwb_c
+	jsr i2cnk
+	bra i2cwb_n
+i2cwb_c:
+	jsr i2cak
+i2cwb_n:
+	dex
+	bne i2cwb_l
+;
+; read ack/nak
+;
+	jsr i2cdh
+	jsr i2cgb  ;get bit
+	jsr i2cdl
+	cmp #0
+	rts     ; Z=1 ok - z=0 fail
+;
+; i2csb - send bit
+;
+i2csb:
+	cmp #1
+	beq i2csb_1
+;
+	jmp i2cak	;data low
+;
+i2csb_1:
+	jmp i2cnk	;data high
+;
+; i2crb - read byte
+;
+mi2crea:
+i2c_read:
+i2crb:
+	jsr i2cdh
+	jsr i2ccl
+	lda #0
+	ldx #8
+;
+i2crb_l:
+	pha
+	jsr i2cgb       ; get bit
+	ror
+	pla
+	rol
+	dex
+	bne i2crb_l
+	rts
+;
+; i2cgb - get bit
+;
+i2cgb:
+	jsr i2cch
+	lda porta0
+	and #SDA
+	bne i2cgb_1
+	lda #0
+	bra i2cgb_e
+;
+i2cgb_1:
+	lda #1
+;
+i2cgb_e:
+	jsr i2ccl
+	cmp #0
+	rts
+;
+; i2cst - start
+;
+mi2cstr:
+i2c_start:
+i2cst:
+	jsr i2cdl
+	nop
+	jmp i2ccl
+;
+; i2csp - stop
+;
+mi2cstp:
+i2c_stop:
+i2csp:
+	jsr i2cch
+	nop
+	jmp i2cdh
+;
+; i2cak - ack
+;
+mi2cack:
+i2c_ack:
+i2cak:			;d=0
+	jsr i2cdl
+i2cckp:
+	jsr i2cch
+	nop
+	nop
+	jmp i2ccl
+;
+; i2cnk - nack
+;
+mi2cnak:
+i2c_nack:
+i2cnk:
+	jsr i2cdh
+	bra i2cckp
+;
+; i2cdl - data  low
+;
+i2cdl:
+	pha
+	lda ddra0
+	ora #SDA
+	sta ddra0
+	lda porta0
+	and #<~SDA
+	sta porta0
+	pla
+	rts
+;
+; ic2dh - data high
+;
+i2cdh:
+	pha
+	lda ddra0
+	and #<~SDA
+	sta ddra0
+	pla
+	rts
+;
+; i2ccl - clock low
+;
+i2ccl:
+	pha
+	lda ddra0
+	ora #SCL
+	sta ddra0
+	lda porta0
+	and #<~SCL
+	sta porta0
+	pla
+	rts
+;
+; i2cch - clock high
+;
+i2cch:
+	pha
+	lda ddra0
+	and #<~SCL
+	sta ddra0
+	pla
+	rts
+;
+
+

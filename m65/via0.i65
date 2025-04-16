@@ -1,0 +1,24 @@
+;via0
+portb0	:= via0
+orb0	:= via0
+irb0	:= via0
+porta0	:= via0+1
+ora0	:= via0+1
+ira0	:= via0+1
+ddrb0	:= via0+2
+ddra0	:= via0+3
+t1cl0	:= via0+4
+t1ch0	:= via0+5
+t1ll0	:= via0+6
+t1lh0	:= via0+7
+t2cl0	:= via0+8
+t2ch0	:= via0+9
+sr0		:= via0+10
+acr0	:= via0+11
+pcr0	:= via0+12
+ifr0	:= via0+13
+ier0	:= via0+14
+portanh0	:= via0+15
+oranh0	:= via0+15
+iranh0	:= via0+15
+

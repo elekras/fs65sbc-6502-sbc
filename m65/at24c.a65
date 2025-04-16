@@ -1,0 +1,225 @@
+;
+;----------------------------------------------------------
+; m65 - fs65sbc simple monitor
+;----------------------------------------------------------
+; at24c.a65 - i2c eeprom related routines
+; by Fabio Sturman (c) 2019,2023
+; fabio.sturman@gmail.com
+;----------------------------------------------------------
+;
+; AT24C256 read/write
+;
+AT24C256	:= $a0
+PLEN		:= 64
+PLENL		:= 6		;log(2,64)
+;
+page	:= add
+plen	:= len
+dmapo	:= data
+
+spagey:
+	lda page
+	ldx page+1
+	sta rb
+	stx rb+1
+	ldy #PLENL			;log(base=2,num=64) for 24c256
+@l:
+	asl rb
+	rol rb+1
+	dey
+	bne @l
+	rts
+;
+;----------------------------------------------------------
+; at24c_rd
+; reads page64 of eeprom to memory @dmapo
+;----------------------------------------------------------
+;
+mat24r:
+	sta dmapo
+	stx dmapo+1
+at24c_rd:
+	jsr i2c_init	;to idle state
+	jsr i2c_start
+	lda #AT24C256
+	jsr i2c_write
+	bne at24c_rde				;hi
+	jsr spagey		;compute eeprom add from block n
+	lda rb+1
+	jsr i2c_write
+	bne at24c_rde 
+	lda rb
+	jsr i2c_write
+	bne at24c_rde
+	jsr i2c_stop	;comment for 512
+;
+	jsr i2c_start
+	lda #AT24C256+1
+	jsr i2c_write
+	bne at24c_rde
+;
+	ldy #0		;read 1 block of data
+@lr:
+	jsr i2c_read
+	sta (dmapo),y
+	iny
+	cpy #PLEN
+	bcs at24c_rdq
+	jsr i2c_ack
+	bra @lr
+;
+at24c_rdq:
+	jsr i2c_nack
+at24c_rdq0:
+	jsr i2c_stop
+	clc
+	lda #0
+	rts
+at24c_rde:
+	jsr i2c_init	;idle & return error
+	lda #$a0
+	sec
+	rts
+;
+;----------------------------------------------------------
+; at24c_wr
+; write from @dmapo to page64 of eeprom
+;----------------------------------------------------------
+;
+mat24w:
+	sta dmapo
+	stx dmapo+1
+at24c_wr:
+	jsr i2c_init
+	jsr i2c_start
+	lda #AT24C256
+	jsr i2c_write
+	bne @qe
+	jsr spagey                
+	lda rb+1
+	jsr i2c_write
+	bne @qe
+	lda rb
+	jsr i2c_write
+	bne @qe
+;
+	ldy #0
+@l:
+	lda (dmapo),y
+	jsr i2c_write
+	bne @qe
+	iny
+	cpy #PLEN
+	bcc @l
+	bcs at24c_rdq0
+@qe:
+	jsr i2c_init	;error
+	lda #$a1
+	sec
+	rts
+;
+;----------------------------------------------------------
+; cmd_at24crd - Q<p><l><a> read page of eeprom
+; <p>=start page, <l>=number of pages, <a>=mamory address
+; read eeprom page
+;----------------------------------------------------------
+;
+cmd_at24crd:
+	jsr get_par
+@l:
+	jsr at24c_rd
+	bcs @r			;return
+	print_c '.'
+	inc_x page
+	clc
+	lda dmapo
+	adc #PLEN
+	sta dmapo
+	bcc @s1
+	inc dmapo+1
+@s1:
+	dec_x plen
+	bne @l
+@r:
+	jmp put_cr_lf
+;
+;----------------------------------------------------------
+; cmd_at24cwr - K<p><l><a>
+; <p>=start page, <l>=number of pages, <a>=memory address
+;  write to eeprom
+;----------------------------------------------------------
+;
+cmd_at24cwr:
+	jsr get_par
+@l:
+	jsr at24c_wr
+	jsr at24c_wait
+	bcs @r			;return
+	print_c '.'
+	inc_x page
+	clc
+	lda dmapo
+	adc #PLEN
+	sta dmapo
+	bcc @s1
+	inc dmapo+1
+@s1:
+	dec_x plen
+	bne @l
+@r:
+	jmp put_cr_lf
+;
+;--------------------------------------
+; at24c_wait - waits eeprom to end
+; writing
+;--------------------------------------
+;
+at24c_wait:
+	mov_n2x 10000,ra
+at24c_wait2:
+	jsr i2c_init		;to idle state
+	jsr i2c_start
+	lda #AT24C256
+	jsr i2c_write
+	bne at24c_wait1
+	clc
+	rts
+at24c_wait1:
+	dec_x ra
+	bne at24c_wait2
+	sec
+	rts
+;
+;--------------------------------------
+; mat24p set page in ax
+;--------------------------------------
+;
+at24c_p:
+mat24p:
+	sta page
+	stx page+1
+	rts
+;
+	.if 0
+;
+;-------------------------------------
+; SWEET16 TEST  
+; CLEAR A BLOCK OF MEMORY
+;-------------------------------------
+BLOCK	:= $A00
+N		:= $234
+;
+CLEAR:
+	jsr sw16
+	.setcpu "sweet16"
+	SET R0,0		;0 FOR CLEARING WITH
+	SET R1,BLOCK	;ADDRESS OF BLOCK
+	SET R2,N		;# BYTES TO CLEAR
+L1:
+	ST @R1			;STORE IN BLOCK
+	DCR R2
+	BNZ L1			;NOT FINISHED YET
+	RTN
+;
+	.setcpu "65C02"
+	.endif
